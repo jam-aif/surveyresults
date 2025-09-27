@@ -1,0 +1,13 @@
+ [server]
+  headless = true
+  port = $PORT
+  enableCORS = false
+  enableXsrfProtection = false
+
+  [theme]
+  primaryColor = "#667eea"
+  backgroundColor = "#ffffff"
+  secondaryBackgroundColor = "#f8f9ff"
+  textColor = "#2c3e50"
+  font = "sans serif"
+  5. Click "Commit new file"
