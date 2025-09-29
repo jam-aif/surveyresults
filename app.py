@@ -23,6 +23,15 @@ try:
 except ImportError:
     GOOGLE_APIS_AVAILABLE = False
 
+try:
+    from docx import Document
+    from docx.shared import Inches
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.enum.style import WD_STYLE_TYPE
+    DOCX_AVAILABLE = True
+except ImportError:
+    DOCX_AVAILABLE = False
+
 def add_custom_css():
     """Add custom CSS for Typeform-like styling"""
     st.markdown("""
@@ -1299,9 +1308,29 @@ def generate_company_wide_narrative_report(team_data):
     """Generate a comprehensive narrative report for company-wide analysis"""
     report = "# Company-Wide Survey Analysis Report\n\n"
     report += f"Generated on: {pd.Timestamp.now().strftime('%B %d, %Y')}\n\n"
-    report += "## Executive Summary\n\n"
 
     team_names = ["Andrew's Team", 'Build Team', 'People and Marketing Team', 'Finance and Operations Team']
+
+    # Executive Summary with team overview
+    report += "## Executive Summary\n\n"
+
+    # Count teams with data
+    teams_with_data = []
+    total_responses = 0
+
+    for team_name in team_names:
+        if team_name in team_data and any(team_data[team_name].values()):
+            teams_with_data.append(team_name)
+            # Count responses for this team
+            for category, files in team_data[team_name].items():
+                for file_info in files:
+                    if 'data' in file_info and not file_info['data'].empty:
+                        total_responses += len(file_info['data'])
+
+    report += f"This comprehensive analysis covers **{len(teams_with_data)} teams** with a total of **{total_responses} responses** across themes, questions, and comments.\n\n"
+
+    if teams_with_data:
+        report += f"**Teams Analyzed:** {', '.join(teams_with_data)}\n\n"
 
     # Aggregate data
     all_themes_data = []
@@ -1328,18 +1357,117 @@ def generate_company_wide_narrative_report(team_data):
                     comments_data['_team_source'] = team_name
                     all_comments_data.append(comments_data)
 
-    # Generate comprehensive analysis
+    # Individual Team Summaries
+    report += "## Team-by-Team Summary\n\n"
+
+    for team_name in teams_with_data:
+        report += f"### {team_name}\n\n"
+
+        # Get team-specific data
+        team_themes = []
+        team_questions = []
+        team_comments = []
+
+        if team_name in team_data:
+            # Process themes
+            for file_info in team_data[team_name].get('Themes', []):
+                if 'data' in file_info and not file_info['data'].empty:
+                    team_themes.append(file_info['data'])
+
+            # Process questions
+            for file_info in team_data[team_name].get('Questions', []):
+                if 'data' in file_info and not file_info['data'].empty:
+                    team_questions.append(file_info['data'])
+
+            # Process comments
+            for file_info in team_data[team_name].get('Comments', []):
+                if 'data' in file_info and not file_info['data'].empty:
+                    team_comments.append(file_info['data'])
+
+        # Generate team summary
+        team_summary_items = []
+
+        if team_themes:
+            combined_themes = pd.concat(team_themes, ignore_index=True)
+            theme_count = len(combined_themes)
+            team_summary_items.append(f"**Themes:** {theme_count} responses")
+
+        if team_questions:
+            combined_questions = pd.concat(team_questions, ignore_index=True)
+            question_count = len(combined_questions)
+            team_summary_items.append(f"**Questions:** {question_count} responses")
+
+        if team_comments:
+            combined_comments = pd.concat(team_comments, ignore_index=True)
+            comment_count = len(combined_comments)
+            team_summary_items.append(f"**Comments:** {comment_count} responses")
+
+        if team_summary_items:
+            report += f"**Data Overview:** {' | '.join(team_summary_items)}\n\n"
+
+        # Add team-specific insights
+        if team_themes:
+            # Quick theme analysis
+            theme_col = None
+            score_col = None
+            for col in combined_themes.columns:
+                if any(word in col.lower() for word in ['theme', 'category', 'domain']):
+                    theme_col = col
+                    break
+            for col in combined_themes.columns:
+                if any(word in col.lower() for word in ['score', 'rating', 'value']) and not col.startswith('_'):
+                    score_col = col
+                    break
+
+            if theme_col and score_col:
+                try:
+                    combined_themes['Score_Numeric'] = pd.to_numeric(combined_themes[score_col], errors='coerce')
+                    valid_data = combined_themes.dropna(subset=['Score_Numeric', theme_col])
+                    if not valid_data.empty:
+                        avg_score = valid_data['Score_Numeric'].mean()
+                        top_theme = valid_data.groupby(theme_col)['Score_Numeric'].mean().idxmax()
+                        top_score = valid_data.groupby(theme_col)['Score_Numeric'].mean().max()
+                        report += f"**Key Insight:** Average team score is {avg_score:.2f}. Top performing theme: '{top_theme}' ({top_score:.2f})\n\n"
+                except:
+                    pass
+
+        if team_comments:
+            # Quick sentiment analysis
+            try:
+                comments_data, _, _, comment_col = analyze_comments_data(combined_comments)
+                if comments_data:
+                    all_team_comments = [item['Comment'] for item in comments_data if item.get('Comment') and item['Comment'] != "No comment"]
+                    if all_team_comments:
+                        sentiment_analysis = analyze_comment_sentiment(all_team_comments)
+                        positive_pct = sentiment_analysis['positive_count'] / sentiment_analysis['total_comments'] * 100
+                        report += f"**Sentiment:** {positive_pct:.0f}% positive sentiment across comments\n\n"
+            except:
+                pass
+
+    # Company-Wide Analysis
     if all_themes_data:
-        report += "## Themes Analysis\n\n"
+        report += "## Company-Wide Themes Analysis\n\n"
         report += generate_company_themes_narrative(all_themes_data, team_names)
 
     if all_questions_data:
-        report += "## Questions Analysis\n\n"
+        report += "## Company-Wide Questions Analysis\n\n"
         report += generate_company_questions_narrative(all_questions_data, team_names)
 
     if all_comments_data:
-        report += "## Comments Analysis\n\n"
+        report += "## Company-Wide Comments Analysis\n\n"
         report += generate_company_comments_narrative(all_comments_data, team_names)
+
+    # Strategic Recommendations
+    report += "## Strategic Recommendations\n\n"
+    report += "Based on the comprehensive analysis across all teams:\n\n"
+    report += "**Immediate Actions:**\n"
+    report += "- Address themes with consistently low scores across multiple teams\n"
+    report += "- Focus on areas where negative sentiment is prevalent in comments\n"
+    report += "- Leverage high-performing themes as best practices to share across teams\n\n"
+    report += "**Long-term Initiatives:**\n"
+    report += "- Develop targeted improvement plans for underperforming areas\n"
+    report += "- Create cross-team collaboration opportunities based on shared strengths\n"
+    report += "- Regular follow-up surveys to track progress on identified issues\n\n"
 
     return report
 
@@ -1566,6 +1694,100 @@ def generate_company_comments_narrative(all_comments_data, team_names):
 
     return narrative
 
+def create_word_document(report_content, report_title):
+    """Create a Word document from the report content"""
+    if not DOCX_AVAILABLE:
+        return None, "python-docx package not available"
+
+    try:
+        # Create a new document
+        doc = Document()
+
+        # Add title
+        title_paragraph = doc.add_heading(report_title, 0)
+        title_paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+        # Add generation date
+        date_paragraph = doc.add_paragraph(f"Generated on: {pd.Timestamp.now().strftime('%B %d, %Y')}")
+        date_paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+        # Add a page break after title
+        doc.add_page_break()
+
+        # Process the content line by line
+        lines = report_content.split('\n')
+
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+
+            if line.startswith('# '):
+                # Main title (already added, skip)
+                continue
+            elif line.startswith('## '):
+                # Section headers (Heading 1)
+                doc.add_heading(line[3:], level=1)
+            elif line.startswith('### '):
+                # Subsection headers (Heading 2)
+                doc.add_heading(line[4:], level=2)
+            elif line.startswith('**') and line.endswith('**') and len(line) > 4:
+                # Bold text as Heading 3 or strong paragraph
+                text = line[2:-2]
+                if len(text) < 50:  # Short text = heading
+                    doc.add_heading(text, level=3)
+                else:  # Long text = bold paragraph
+                    p = doc.add_paragraph()
+                    run = p.add_run(text)
+                    run.bold = True
+            elif line.startswith('- '):
+                # Bullet points
+                doc.add_paragraph(line[2:], style='List Bullet')
+            elif line.startswith('*') and line.endswith('*') and not line.startswith('**'):
+                # Italic text
+                p = doc.add_paragraph()
+                run = p.add_run(line[1:-1])
+                run.italic = True
+            else:
+                # Regular paragraph
+                if line:
+                    doc.add_paragraph(line)
+
+        # Save to BytesIO buffer
+        buffer = BytesIO()
+        doc.save(buffer)
+        buffer.seek(0)
+
+        return buffer.getvalue(), None
+
+    except Exception as e:
+        return None, str(e)
+
+def show_word_export_option(report_content, report_title):
+    """Show Word document export option"""
+    if not DOCX_AVAILABLE:
+        st.warning("Word document export requires python-docx package.")
+        return
+
+    if st.button("📄 Download as Word Document", help="Generate and download a formatted Word document"):
+        with st.spinner("Creating Word document..."):
+            word_content, error = create_word_document(report_content, report_title)
+
+            if error:
+                st.error(f"Error creating Word document: {error}")
+            else:
+                # Create download button
+                safe_title = report_title.replace(" ", "_").replace("-", "_").lower()
+                filename = f"{safe_title}_{pd.Timestamp.now().strftime('%Y%m%d')}.docx"
+
+                st.download_button(
+                    label="📥 Download Word Document",
+                    data=word_content,
+                    file_name=filename,
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    help="Download the formatted Word document"
+                )
+
 # Google Docs Integration Functions
 def setup_google_credentials():
     """Setup Google OAuth credentials"""
@@ -1573,15 +1795,27 @@ def setup_google_credentials():
         return None, "Google APIs not available. Install required packages."
 
     # OAuth 2.0 configuration
-    CLIENT_CONFIG = {
-        "web": {
-            "client_id": st.secrets.get("google_client_id", ""),
-            "client_secret": st.secrets.get("google_client_secret", ""),
-            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-            "token_uri": "https://oauth2.googleapis.com/token",
-            "redirect_uris": [st.secrets.get("redirect_uri", "http://localhost:8501")]
+    try:
+        CLIENT_CONFIG = {
+            "web": {
+                "client_id": st.secrets.get("google_client_id", ""),
+                "client_secret": st.secrets.get("google_client_secret", ""),
+                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                "token_uri": "https://oauth2.googleapis.com/token",
+                "redirect_uris": [st.secrets.get("redirect_uri", "http://localhost:8501")]
+            }
         }
-    }
+    except:
+        # No secrets file available, use empty config
+        CLIENT_CONFIG = {
+            "web": {
+                "client_id": "",
+                "client_secret": "",
+                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                "token_uri": "https://oauth2.googleapis.com/token",
+                "redirect_uris": ["http://localhost:8501"]
+            }
+        }
 
     SCOPES = ['https://www.googleapis.com/auth/documents', 'https://www.googleapis.com/auth/drive.file']
 
@@ -1777,77 +2011,100 @@ def create_google_doc(title, content, credentials):
         return None, str(e)
 
 def show_google_docs_integration(report_content, report_title):
-    """Show Google Docs integration UI"""
-    if not GOOGLE_APIS_AVAILABLE:
-        st.error("Google Docs integration requires additional packages. Please contact your administrator.")
-        return
-
+    """Show Google Docs integration with automatic document creation"""
     st.markdown("### 🔗 Google Docs Integration")
 
-    # Check if we have Google credentials configured
-    if not all([
-        st.secrets.get("google_client_id"),
-        st.secrets.get("google_client_secret"),
-        st.secrets.get("redirect_uri")
-    ]):
-        st.error("Google Docs integration is not configured. Please add your Google API credentials to Streamlit secrets.")
-        st.info("""
-        To enable Google Docs integration:
-        1. Create a project in Google Cloud Console
-        2. Enable Google Docs API and Google Drive API
-        3. Create OAuth 2.0 credentials
-        4. Add the credentials to your Streamlit secrets:
-           - `google_client_id`
-           - `google_client_secret`
-           - `redirect_uri` (usually your Streamlit app URL)
-        """)
-        return
+    # Check if we have Google API credentials
+    try:
+        has_credentials = st.secrets.get("google_client_id") is not None
+    except:
+        has_credentials = False
 
-    # Check if user is authenticated
-    if 'google_credentials' not in st.session_state:
-        st.info("Click below to authenticate with Google and create documents automatically.")
+    if has_credentials:
+        # Automatic Google Doc creation
+        st.success("🚀 **Automatic Google Doc Creation Available!**")
 
-        auth_url, error = get_google_auth_url()
-        if error:
-            st.error(f"Error generating auth URL: {error}")
-            return
+        col1, col2 = st.columns([1, 1])
 
-        if st.button("🔐 Login with Google"):
-            st.markdown(f"[Click here to authenticate with Google]({auth_url})")
-            st.info("After authentication, copy the authorization code from the URL and paste it below.")
+        with col1:
+            if st.button("📄 Create Google Doc Automatically", help="Automatically create a new Google Doc with your report content"):
+                with st.spinner("Creating Google Document..."):
+                    try:
+                        # Set up credentials and create document
+                        client_config, scopes = setup_google_credentials()
+                        if client_config:
+                            credentials, error = get_google_credentials(client_config, scopes)
+                            if credentials:
+                                doc_id, error = create_google_doc(report_title, report_content, credentials)
+                                if doc_id:
+                                    doc_url = f"https://docs.google.com/document/d/{doc_id}/edit"
+                                    st.success("✅ Google Document created successfully!")
+                                    st.markdown(f"**[📄 Open Your Report Document]({doc_url})**")
+                                    st.balloons()
+                                else:
+                                    st.error(f"Failed to create Google Doc: {error}")
+                            else:
+                                st.error(f"Failed to authenticate: {error}")
+                        else:
+                            st.error("Failed to set up Google credentials")
+                    except Exception as e:
+                        st.error(f"Error creating Google Doc: {str(e)}")
+                        # Fall back to manual method
+                        st.info("Falling back to manual copy/paste method...")
+                        show_manual_google_docs_method(report_content, report_title)
 
-        # Input for authorization code
-        auth_code = st.text_input("Authorization Code", help="Paste the code from Google OAuth redirect URL")
-        if auth_code:
-            credentials, error = handle_google_callback(auth_code)
-            if error:
-                st.error(f"Error handling callback: {error}")
-            else:
-                st.session_state.google_credentials = credentials
-                st.success("Successfully authenticated with Google!")
-                st.rerun()
+        with col2:
+            st.markdown("**✨ How it works:**")
+            st.markdown("""
+            1. **Click the button** → Creates new Google Doc
+            2. **Content added automatically** → Your report is formatted
+            3. **Opens in Google Docs** → Ready to edit and share
+            4. **Saved to your Drive** → Access anywhere
+            """)
+
     else:
-        # User is authenticated, show create document option
-        st.success("✅ Authenticated with Google")
+        # Manual method when no credentials
+        show_manual_google_docs_method(report_content, report_title)
 
-        if st.button("📄 Create Google Doc"):
-            with st.spinner("Creating Google Document..."):
-                doc_url, error = create_google_doc(
-                    report_title,
-                    report_content,
-                    st.session_state.google_credentials
-                )
+        with st.expander("🔧 Want Automatic Creation? Set up Google API"):
+            st.markdown("""
+            **To enable one-click Google Doc creation:**
+            1. Add your Google API credentials to secrets
+            2. Include: `google_client_id`, `google_client_secret`, `redirect_uri`
+            3. Enable Google Docs API and Google Drive API in Google Cloud Console
+            """)
 
-                if error:
-                    st.error(f"Error creating document: {error}")
-                else:
-                    st.success("Document created successfully!")
-                    st.markdown(f"[📖 Open your Google Doc]({doc_url})")
+def show_manual_google_docs_method(report_content, report_title):
+    """Show the manual copy/paste method for Google Docs"""
+    st.info("📋 **Manual Method**: Copy & paste into Google Docs")
 
-        if st.button("🔓 Logout from Google"):
-            if 'google_credentials' in st.session_state:
-                del st.session_state.google_credentials
-            st.rerun()
+    col1, col2 = st.columns([1, 1])
+
+    with col1:
+        st.markdown("**📋 Step 1: Copy Report**")
+        st.text_area(
+            "Select All (Cmd/Ctrl+A) and Copy (Cmd/Ctrl+C):",
+            value=report_content,
+            height=200,
+            help="Click in the box, select all text (Cmd/Ctrl+A), then copy (Cmd/Ctrl+C)"
+        )
+
+    with col2:
+        st.markdown("**📝 Step 2: Create Google Doc**")
+        google_docs_url = "https://docs.google.com/document/create"
+
+        st.markdown(f"""
+        1. **[📝 Open Google Docs]({google_docs_url})**
+        2. **Paste your report** (Cmd/Ctrl+V)
+        3. **Add title**: `{report_title}`
+        4. **Share with your team** 🎉
+        """)
+
+        st.link_button(
+            "🚀 Open Google Docs Now",
+            google_docs_url,
+            help="Opens Google Docs in a new tab"
+        )
 
 def analyze_comment_sentiment(comments_list):
     """Analyze sentiment of comments without exposing actual content"""
@@ -2523,30 +2780,39 @@ def show_company_wide_analysis(team_data):
     # Export options for company-wide analysis
     st.markdown("### 📄 Export Options")
 
-    col1, col2 = st.columns([1, 1])
+    col1, col2, col3 = st.columns([1, 1, 1])
     with col1:
         if st.button("📋 Copy Report Text", help="Generate text report to copy/paste"):
-            report_content = generate_company_wide_narrative_report(team_data)
-            st.text_area(
-                "Copy this report to Google Docs:",
-                value=report_content,
-                height=400,
-                help="Copy all text and paste into a new Google Doc"
-            )
+            try:
+                with st.spinner("Generating company-wide report..."):
+                    st.write(f"Debug: Team data keys: {list(team_data.keys())}")
+                    report_content = generate_company_wide_narrative_report(team_data)
+                    st.success(f"Report generated! ({len(report_content)} characters)")
+                    st.text_area(
+                        "Copy this report to Google Docs:",
+                        value=report_content,
+                        height=400,
+                        help="Copy all text and paste into a new Google Doc"
+                    )
+            except Exception as e:
+                st.error(f"Error generating report: {str(e)}")
+                st.exception(e)
 
     with col2:
-        if st.button("💾 Download Report", help="Download report as text file"):
-            report_content = generate_company_wide_narrative_report(team_data)
-            report_title = f"Company-Wide Survey Analysis - {pd.Timestamp.now().strftime('%B %d, %Y')}"
+        if st.button("🔗 Create Google Doc", help="Get help creating Google Document"):
+            try:
+                with st.spinner("Generating company-wide report..."):
+                    report_content = generate_company_wide_narrative_report(team_data)
+                    report_title = f"Company-Wide Survey Analysis - {pd.Timestamp.now().strftime('%B %d, %Y')}"
+                    show_google_docs_integration(report_content, report_title)
+            except Exception as e:
+                st.error(f"Error generating report: {str(e)}")
+                st.exception(e)
 
-            # Create downloadable file
-            st.download_button(
-                label="📄 Download as .txt",
-                data=report_content,
-                file_name=f"company_wide_analysis_{pd.Timestamp.now().strftime('%Y%m%d')}.txt",
-                mime="text/plain",
-                help="Download and then copy/paste into Google Docs"
-            )
+    with col3:
+        report_content = generate_company_wide_narrative_report(team_data)
+        report_title = f"Company-Wide Survey Analysis - {pd.Timestamp.now().strftime('%B %d, %Y')}"
+        show_word_export_option(report_content, report_title)
 
     # Create tabs for different analysis types
     company_tabs = st.tabs(["🎯 Themes Summary", "❓ Questions Summary", "💬 Comments Summary"])
@@ -2906,7 +3172,7 @@ def main():
                 # Export options for individual team
                 st.markdown("#### 📄 Export Options")
 
-                col1, col2 = st.columns([1, 1])
+                col1, col2, col3 = st.columns([1, 1, 1])
                 with col1:
                     if st.button(f"📋 Copy {selected_team} Text", help="Generate text report to copy/paste"):
                         report_content = generate_team_narrative_report(selected_team, team_data[selected_team])
@@ -2918,18 +3184,15 @@ def main():
                         )
 
                 with col2:
-                    if st.button(f"💾 Download {selected_team} Report", help="Download report as text file"):
+                    if st.button(f"🔗 Create {selected_team} Google Doc", help="Get help creating Google Document"):
                         report_content = generate_team_narrative_report(selected_team, team_data[selected_team])
+                        report_title = f"{selected_team} Survey Analysis - {pd.Timestamp.now().strftime('%B %d, %Y')}"
+                        show_google_docs_integration(report_content, report_title)
 
-                        # Create downloadable file
-                        safe_team_name = selected_team.replace(" ", "_").replace("'", "").lower()
-                        st.download_button(
-                            label="📄 Download as .txt",
-                            data=report_content,
-                            file_name=f"{safe_team_name}_analysis_{pd.Timestamp.now().strftime('%Y%m%d')}.txt",
-                            mime="text/plain",
-                            help="Download and then copy/paste into Google Docs"
-                        )
+                with col3:
+                    report_content = generate_team_narrative_report(selected_team, team_data[selected_team])
+                    report_title = f"{selected_team} Survey Analysis - {pd.Timestamp.now().strftime('%B %d, %Y')}"
+                    show_word_export_option(report_content, report_title)
 
                 analysis_tabs = st.tabs(["🎯 Themes", "❓ Questions", "💬 Comments"])
 
